@@ -1,0 +1,41 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String     @id @default(cuid())
+  email     String     @unique
+  name      String
+  role      String     @default("CITIZEN")
+  createdAt DateTime   @default(now())
+  incidents Incident[]
+}
+
+model Incident {
+  id          String     @id @default(cuid())
+  category    String
+  priority    String
+  status      String     @default("RECEIVED")
+  description String
+  location    String
+  reporterId  String
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  reporter    User       @relation(fields: [reporterId], references: [id])
+  audit       AuditLog[]
+}
+
+model AuditLog {
+  id         String    @id @default(cuid())
+  action     String
+  actor      String
+  target     String
+  createdAt  DateTime  @default(now())
+  incidentId String?
+  incident   Incident? @relation(fields: [incidentId], references: [id])
+}

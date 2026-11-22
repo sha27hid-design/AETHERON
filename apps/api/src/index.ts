@@ -1,0 +1,12 @@
+import 'dotenv/config';
+import cors from 'cors'; import express from 'express'; import helmet from 'helmet'; import rateLimit from 'express-rate-limit';
+import { createServer } from 'node:http'; import { Server } from 'socket.io'; import { PrismaClient } from '@prisma/client'; import { z } from 'zod';
+const prisma = new PrismaClient(); const app = express(); const http = createServer(app); const io = new Server(http, { cors: { origin: '*' } });
+app.use(helmet()); app.use(cors()); app.use(express.json({limit:'2mb'})); app.use(rateLimit({windowMs:60_000,max:120}));
+const incidentSchema=z.object({category:z.enum(['MEDICAL','ACCIDENT','FIRE','CRIME','FLOOD','DISASTER','OTHER']),description:z.string().min(5).max(1000),location:z.string().min(2),priority:z.enum(['LOW','MEDIUM','HIGH','CRITICAL']).default('HIGH')});
+app.get('/health', async (_q,r)=>{ try { await prisma.$queryRaw`SELECT 1`; r.json({status:'ok',database:'connected',time:new Date().toISOString()}); } catch {r.status(503).json({status:'degraded',database:'unavailable'});} });
+app.get('/api/incidents',async(_q,r)=>r.json(await prisma.incident.findMany({orderBy:{createdAt:'desc'},take:50,include:{reporter:{select:{name:true}}}})));
+app.post('/api/incidents',async(q,r)=>{const data=incidentSchema.safeParse(q.body);if(!data.success)return r.status(400).json({error:'Validation failed',issues:data.error.flatten()}); const email=q.body.email||'demo.citizen@aetheron.local';let user=await prisma.user.findUnique({where:{email}});if(!user)user=await prisma.user.create({data:{email,name:'Demo Citizen',role:'CITIZEN'}});const incident=await prisma.incident.create({data:{...data.data,reporterId:user.id}});await prisma.auditLog.create({data:{action:'SOS_SUBMITTED',actor:user.id,target:incident.id,incidentId:incident.id}});io.emit('incident:created',incident);r.status(201).json({incident,acknowledged:true,message:'Received by AETHERON. An operator will verify this report.'});});
+app.get('/api/overview',async(_q,r)=>{const [active,pending]=await Promise.all([prisma.incident.count({where:{status:{notIn:['CLOSED','RESOLVED']}}}),prisma.incident.count({where:{status:'RECEIVED'}})]);r.json({activeIncidents:active,pendingReports:pending,ambulances:12,availableResources:28,transportServices:42,infrastructureHealth:98,source:'Demo / locally seeded',updatedAt:new Date().toISOString()});});
+io.on('connection',s=>s.emit('system:status',{connected:true}));
+http.listen(Number(process.env.PORT)||4000,()=>console.log('AETHERON API listening on :4000'));
